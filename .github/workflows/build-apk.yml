@@ -1,1 +1,87 @@
+name: Build Quiz Master Pro v1.5.2 AdMob Startup Fix
 
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Android APKs
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="Quiz-Master-Pro-v1.5.2-AdMob-STARTUP-FIX-Project.zip"
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "ERROR: Missing $ZIP_FILE in repository root."
+            ls -la
+            exit 1
+          fi
+          mkdir -p extracted_project
+          unzip -q "$ZIP_FILE" -d extracted_project
+          SETTINGS_FILE="$(find extracted_project -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "ERROR: settings.gradle not found."
+            find extracted_project -maxdepth 5 -print | head -200
+            exit 1
+          fi
+          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
+          test -f "$PROJECT_DIR/app/build.gradle" || test -f "$PROJECT_DIR/app/build.gradle.kts"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project located at $PROJECT_DIR"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK components
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build debug and signed release-test APKs
+        run: |
+          gradle --no-daemon --stacktrace -p "$PROJECT_DIR" :app:assembleDebug :app:assembleRelease
+
+      - name: Verify APK outputs
+        run: |
+          test -f "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$PROJECT_DIR/app/build/outputs/apk/release/app-release.apk"
+          ls -lh "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          ls -lh "$PROJECT_DIR/app/build/outputs/apk/release/app-release.apk"
+
+      - name: Upload debug test APK (Google test ads)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Quiz-Master-Pro-v1.5.2-DEBUG-TEST-APK
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+      - name: Upload release-test APK (debug-key signed, live ad unit)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Quiz-Master-Pro-v1.5.2-RELEASE-TEST-APK
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
